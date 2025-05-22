@@ -1,54 +1,54 @@
 #![no_std]
 
-use core::ptr;
-use core::slice;
-use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
+use core::marker::PhantomData;
 
-pub type Raw<T> = UnsafeCell<MaybeUninit<T>>;
-pub fn new_chunk<const SIZE : usize, T>() -> [Raw<T>;SIZE]{
-    [const { UnsafeCell::new(MaybeUninit::uninit()) };SIZE]
-
+pub fn make_storage<T,const SIZE:usize>() ->[MaybeUninit<T>;SIZE]{
+    [const { MaybeUninit::uninit() };SIZE]
 }
 
-pub struct StackRef<'a,T>{
-    base: &'a[Raw<T>],
-    head: &'a[Raw<T>],
+pub struct StackRef<'a, T> {
+    base: *mut T,
+    head: *mut T,
+    end: *mut T,
 
+    _phantom:PhantomData<&'a T>
 }
 
 impl<'a, T> StackRef<'a, T>{
-    pub fn from_storage(s:&'a[Raw<T>]) -> Self {
+    pub fn from_raw(mem:&'a mut [MaybeUninit<T>]) -> Self{
+        let base = mem.as_mut_ptr() as _;
         Self{
-            base:&s[0..0],
-            head:s,
+            base,
+            head: base,
+            end: unsafe {base.add(mem.len())},
+
+            _phantom:PhantomData,
         }
     }
 
-    pub fn pop(&mut self) -> Option<T>{
-        unsafe {
-            let spot = self.base.last()?;
-            let x = ptr::replace(spot.get(),MaybeUninit::uninit());
-            
-            self.base = &self.base[..self.base.len()-1];
-            self.head = slice::from_raw_parts(spot,self.head.len()+1);
-
-            Some(x.assume_init())
+    pub fn push(&mut self,v:T) -> Result<(),T> {
+        if self.head == self.end {
+            return Err(v)
         }
-        
-    }
 
-    pub fn push(&mut self,v:T) -> Result<(),T>{
         unsafe{
-            if self.head.is_empty() {
-                return Err(v)
-            }
-            self.head = &self.head[1..self.head.len()];
-            self.base = slice::from_raw_parts(self.base.as_ptr(),self.base.len()+1);
+            self.head.write(v);
+            self.head=self.head.add(1);
+        }
 
-            let p = self.base.last().unwrap_unchecked().get();
-            ptr::replace(p,MaybeUninit::new(v));
-            Ok(())
+        Ok(())
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        if self.head == self.base {
+            return None;
+        }
+
+        unsafe {
+            self.head=self.head.sub(1);
+            let ans = self.head.read();
+            Some(ans)
         }
     }
 }
@@ -56,34 +56,42 @@ impl<'a, T> StackRef<'a, T>{
 
 
 #[test]
-fn test_stack_push_pop() {
-    let storage = new_chunk::<4, i32>();
-    let mut stack = StackRef::from_storage(&storage);
+fn test_push_pop_basic() {
+    let mut storage = make_storage::<u32, 4>();
+    let mut stack = StackRef::from_raw(&mut storage);
 
-    assert_eq!(stack.pop(), None); // Underflow
+    assert_eq!(stack.pop(), None);
 
-    assert_eq!(stack.push(10), Ok(()));
-    assert_eq!(stack.push(20), Ok(()));
-    assert_eq!(stack.push(30), Ok(()));
-    assert_eq!(stack.push(40), Ok(()));
-    assert_eq!(stack.push(50), Err(50)); // Overflow
+    assert!(stack.push(10).is_ok());
+    assert!(stack.push(20).is_ok());
 
-    assert_eq!(stack.pop(), Some(40));
-    assert_eq!(stack.pop(), Some(30));
     assert_eq!(stack.pop(), Some(20));
     assert_eq!(stack.pop(), Some(10));
-    assert_eq!(stack.pop(), None); // Underflow again
+    assert_eq!(stack.pop(), None);
 }
 
 #[test]
-fn test_stack_ordering() {
-    let storage = new_chunk::<2, &str>();
-    let mut stack = StackRef::from_storage(&storage);
+fn test_push_overflow() {
+    let mut storage = make_storage::<u32, 2>();
+    let mut stack = StackRef::from_raw(&mut storage);
 
-    assert!(stack.push("first").is_ok());
-    assert!(stack.push("second").is_ok());
-    assert!(stack.push("third").is_err()); // Overflow
+    assert!(stack.push(1).is_ok());
+    assert!(stack.push(2).is_ok());
 
+    // This should fail, stack is full
+    assert_eq!(stack.push(3), Err(3));
+}
+
+#[test]
+fn test_lifo_order() {
+    let mut storage = make_storage::<&'static str, 3>();
+    let mut stack = StackRef::from_raw(&mut storage);
+
+    stack.push("first").unwrap();
+    stack.push("second").unwrap();
+    stack.push("third").unwrap();
+
+    assert_eq!(stack.pop(), Some("third"));
     assert_eq!(stack.pop(), Some("second"));
     assert_eq!(stack.pop(), Some("first"));
     assert_eq!(stack.pop(), None);

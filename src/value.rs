@@ -112,7 +112,7 @@ fn test_value_stack_push_peek_drop_frame() {
     // Now push a dependent frame that references the previous values
     assert!(stack.push_dependent(|frame| {
         assert_eq!(frame, &[a, b]);
-        let cons = Value::Cons(&frame[0], &frame[1]);
+        let cons = Value::Cons(&frame[0], &b);
         [cons]
     }).is_ok());
 

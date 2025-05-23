@@ -32,14 +32,23 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    pub fn write_index(&self) -> usize {
+        unsafe { self.head.offset_from(self.base) as usize }
+    }
+
     pub fn push(&mut self,v:T) -> Result<(),T> {
-        if self.head == self.end {
+        self.push_n::<1>([v;1]).map_err(|a| a.into_iter().next().unwrap())
+    }
+
+    pub fn push_n<const SIZE:usize>(&mut self,v:[T;SIZE]) -> Result<(),[T;SIZE]> {
+        //pointer arithmetic can overflow here
+        if self.head as usize + (SIZE-1)*size_of::<T>() == self.end as usize {
             return Err(v)
         }
 
         unsafe{
-            self.head.write(v);
-            self.head=self.head.add(1);
+            (self.head as *mut [T;SIZE]).write(v);
+            self.head=self.head.add(SIZE);
         }
 
         Ok(())
@@ -57,21 +66,27 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
-    #[inline]
-    pub fn peek<'b>(&'b self) -> Option<&'b T>{
-         if self.head == self.base {
+    pub fn pop_n<const SIZE:usize>(&mut self)->Option<[T;SIZE]>{
+        if (self.head as usize) < self.base as usize + SIZE*size_of::<T>(){
             return None;
         }
 
         unsafe {
-            Some(&*self.head.sub(1))
+            self.head=self.head.sub(SIZE);
+            let ans = (self.head as *mut [T;SIZE]).read();
+            Some(ans)
         }
+    }
+
+    #[inline]
+    pub fn peek<'b>(&'b self) -> Option<&'b T>{
+        self.peek_n::<1>().map(|a| &a[0])
     }
 
     #[inline]
     pub fn peek_n<'b,const SIZE:usize>(&'b self) -> Option<&'b [T;SIZE]>{
         //we cant do normal arithmetic since it may overflow
-         if (self.head as usize) < self.base as usize + SIZE*size_of::<T>(){
+        if (self.head as usize) < self.base as usize + SIZE*size_of::<T>(){
             return None;
         }
 
@@ -210,4 +225,77 @@ fn test_peek_many() {
     } else {
         panic!("peek_many(3) should still work");
     }
+}
+
+#[test]
+fn test_push_n_and_pop_n_success() {
+    let mut storage = make_storage::<u32, 6>();
+    let mut stack = StackRef::from_raw(&mut storage);
+
+    let arr1 = [10, 20];
+    let arr2 = [30, 40, 50];
+
+    assert!(stack.push_n(arr1).is_ok());
+    assert!(stack.push_n(arr2).is_ok());
+
+    // Should pop [30, 40, 50] first
+    if let Some(popped) = stack.pop_n::<3>() {
+        assert_eq!(popped, [30, 40, 50]);
+    } else {
+        panic!("pop_n::<3> should succeed");
+    }
+
+    // Then pop [10, 20]
+    if let Some(popped) = stack.pop_n::<2>() {
+        assert_eq!(popped, [10, 20]);
+    } else {
+        panic!("pop_n::<2> should succeed");
+    }
+
+    assert!(stack.pop_n::<1>().is_none());
+}
+
+#[test]
+fn test_push_n_overflow() {
+    let mut storage = make_storage::<u32, 4>();
+    let mut stack = StackRef::from_raw(&mut storage);
+
+    let ok = [1, 2];
+    let fail = [3, 4, 5];
+
+    assert!(stack.push_n(ok).is_ok());
+    assert_eq!(stack.push_n(fail), Err(fail));
+}
+
+#[test]
+fn test_pop_n_underflow() {
+    let mut storage = make_storage::<u32, 3>();
+    let mut stack = StackRef::from_raw(&mut storage);
+
+    assert!(stack.push(1).is_ok());
+    assert!(stack.pop_n::<2>().is_none());
+    assert!(stack.pop_n::<1>().is_some());
+    assert!(stack.pop_n::<1>().is_none());
+}
+
+#[test]
+fn test_mixed_push_pop_n() {
+    let mut storage = make_storage::<u32, 6>();
+    let mut stack = StackRef::from_raw(&mut storage);
+
+    assert!(stack.push_n([1, 2, 3]).is_ok());
+    assert!(stack.push(4).is_ok());
+    assert!(stack.push_n([5, 6]).is_ok());
+
+    // pop top 2: should be [5, 6]
+    assert_eq!(stack.pop_n::<2>(), Some([5, 6]));
+
+    // pop single: should be 4
+    assert_eq!(stack.pop(), Some(4));
+
+    // pop 3: should be [1, 2, 3]
+    assert_eq!(stack.pop_n::<3>(), Some([1, 2, 3]));
+
+    // stack is now empty
+    assert!(stack.pop().is_none());
 }

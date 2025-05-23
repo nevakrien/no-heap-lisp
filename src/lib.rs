@@ -60,6 +60,33 @@ impl<'a, T> StackRef<'a, T>{
         self.head = self.base.add(idx)
     }}
 
+    pub unsafe fn advance(&mut self,add:usize){ unsafe {
+        self.set_write_index(self.write_index()+add)
+    }}
+
+    /// splits the stack into a full left part and an empty right part
+    pub fn split<'b>(&'b mut self) -> (StackRef<'b, T>,StackRef<'b, T>){
+        let end = StackRef{
+            base:self.head,
+            head:self.head,
+            end:self.end,
+
+            _phantom:PhantomData,
+
+        };
+
+        let start = StackRef{
+            base:self.base,
+            head:self.head,
+            end:self.head,
+
+            _phantom:PhantomData,
+
+        };
+
+        (start,end)
+    }
+
     pub fn push(&mut self,v:T) -> Result<(),T> {
         if self.head == self.end {
             return Err(v)
@@ -332,4 +359,31 @@ fn test_slice_conversion_basic() {
     assert_eq!(stack.pop(), Some(20));
     assert_eq!(stack.pop(), Some(10));
     assert_eq!(stack.pop(), None);
+}
+
+#[test]
+fn test_split_stack() {
+    let mut storage = make_storage::<u32, 6>();
+    let mut original = StackRef::from_slice(&mut storage);
+
+    // Push three elements
+    assert!(original.push(1).is_ok());
+    assert!(original.push(2).is_ok());
+    assert!(original.push(3).is_ok());
+
+    // Split the stack
+    let (mut left, mut right) = original.split();
+
+    // Left stack should contain [1, 2, 3]
+    assert_eq!(left.pop(), Some(3));
+    assert_eq!(left.pop(), Some(2));
+    assert_eq!(left.pop(), Some(1));
+    assert_eq!(left.pop(), None);
+
+    // Right stack should be empty
+    assert_eq!(right.pop(), None);
+
+    // Push to right and check it's isolated from left
+    assert!(right.push(10).is_ok());
+    assert_eq!(right.pop(), Some(10));
 }

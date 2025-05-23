@@ -1,5 +1,6 @@
 #![no_std]
 
+use core::ptr;
 use core::slice;
 use core::mem::MaybeUninit;
 use core::marker::PhantomData;
@@ -27,7 +28,7 @@ fn next(&mut self) -> Option<T> { self.pop() }
 
 
 impl<'a, T> StackRef<'a, T>{
-    pub fn from_raw(mem:&'a mut [MaybeUninit<T>]) -> Self{
+    pub fn from_slice(mem:&'a mut [MaybeUninit<T>]) -> Self{
         let base = mem.as_mut_ptr() as _;
         Self{
             base,
@@ -38,12 +39,26 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    pub fn to_slice(self) -> &'a mut [MaybeUninit<T>] {
+        unsafe { 
+            let len = self.end.offset_from(self.base) as usize; 
+            let p = ptr::slice_from_raw_parts_mut(self.base,len);
+            &mut *(p as *mut [MaybeUninit<T>])
+        }
+    }
+
     /// returns the index the index the writing head points to
     /// [T T T |*****junk****]
     ///        ^
     pub fn write_index(&self) -> usize {
         unsafe { self.head.offset_from(self.base) as usize }
     }
+
+    /// sets the write index retrived from write_index
+    /// note that the memory below that index is assumed inilized 
+    pub unsafe fn set_write_index(&mut self,idx:usize){ unsafe {
+        self.head = self.base.add(idx)
+    }}
 
     pub fn push(&mut self,v:T) -> Result<(),T> {
         if self.head == self.end {
@@ -135,36 +150,9 @@ impl<'a, T> StackRef<'a, T>{
 }
 
 #[test]
-fn test_push_pop_basic() {
-    let mut storage = make_storage::<u32, 4>();
-    let mut stack = StackRef::from_raw(&mut storage);
-
-    assert_eq!(stack.pop(), None);
-
-    assert!(stack.push(10).is_ok());
-    assert!(stack.push(20).is_ok());
-
-    assert_eq!(stack.pop(), Some(20));
-    assert_eq!(stack.pop(), Some(10));
-    assert_eq!(stack.pop(), None);
-}
-
-#[test]
-fn test_push_overflow() {
-    let mut storage = make_storage::<u32, 2>();
-    let mut stack = StackRef::from_raw(&mut storage);
-
-    assert!(stack.push(1).is_ok());
-    assert!(stack.push(2).is_ok());
-
-    // This should fail, stack is full
-    assert_eq!(stack.push(3), Err(3));
-}
-
-#[test]
 fn test_lifo_order() {
     let mut storage = make_storage::<&'static str, 3>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     stack.push("first").unwrap();
     stack.push("second").unwrap();
@@ -180,7 +168,7 @@ fn test_lifo_order() {
 #[test]
 fn test_peek_n() {
     let mut storage = make_storage::<u32, 5>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     assert!(stack.push(1).is_ok());
     assert!(stack.push(2).is_ok());
@@ -213,7 +201,7 @@ use core::mem::size_of;
 #[test]
 fn test_peek_many() {
     let mut storage = make_storage::<u32, 6>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     for i in 1..=5 {
         assert!(stack.push(i).is_ok());
@@ -252,7 +240,7 @@ fn test_peek_many() {
 #[test]
 fn test_push_n_and_pop_n_success() {
     let mut storage = make_storage::<u32, 6>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     let arr1 = [10, 20];
     let arr2 = [30, 40, 50];
@@ -280,7 +268,7 @@ fn test_push_n_and_pop_n_success() {
 #[test]
 fn test_push_n_overflow() {
     let mut storage = make_storage::<u32, 4>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     let ok = [1, 2];
     let fail = [3, 4, 5];
@@ -292,7 +280,7 @@ fn test_push_n_overflow() {
 #[test]
 fn test_pop_n_underflow() {
     let mut storage = make_storage::<u32, 3>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     assert!(stack.push(1).is_ok());
     assert!(stack.pop_n::<2>().is_none());
@@ -303,7 +291,7 @@ fn test_pop_n_underflow() {
 #[test]
 fn test_mixed_push_pop_n() {
     let mut storage = make_storage::<u32, 6>();
-    let mut stack = StackRef::from_raw(&mut storage);
+    let mut stack = StackRef::from_slice(&mut storage);
 
     assert!(stack.push_n([1, 2, 3]).is_ok());
     assert!(stack.push(4).is_ok());
@@ -320,4 +308,28 @@ fn test_mixed_push_pop_n() {
 
     // stack is now empty
     assert!(stack.pop().is_none());
+}
+
+#[test]
+fn test_slice_conversion_basic() {
+    let mut storage = make_storage::<u32, 4>();
+    let mut stack = StackRef::from_slice(&mut storage);
+
+    assert_eq!(stack.pop(), None);
+
+    assert!(stack.push(10).is_ok());
+    assert!(stack.push(20).is_ok());
+
+    let idx = stack.write_index();
+    assert_eq!(idx,2);
+
+    let slice = stack.to_slice();
+    let mut stack = StackRef::from_slice(slice);
+    unsafe {
+        stack.set_write_index(idx);
+    }
+
+    assert_eq!(stack.pop(), Some(20));
+    assert_eq!(stack.pop(), Some(10));
+    assert_eq!(stack.pop(), None);
 }

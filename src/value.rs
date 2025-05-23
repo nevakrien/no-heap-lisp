@@ -47,7 +47,7 @@ impl<'a,'v> ValueStack<'a,'v>{
 		self.0.peek_many(1+size).map(|a| &a[0..*size])
 	}
 
-	pub fn push_dependent<F,const SIZE : usize>(&mut self,f:F) ->Result<(),()>
+	pub fn push_dependent<'c, F,const SIZE : usize>(&'c mut self,f:F) ->Result<(),[Value<'c>;SIZE]>
 	where F:for<'b> FnOnce(&'b [Value<'v>])->[Value<'b>;SIZE]{
 		let num_wrote = {
 			let (left,right) = self.0.split();
@@ -58,12 +58,9 @@ impl<'a,'v> ValueStack<'a,'v>{
 			 * it is kinda tricky to see why this safe
 			 * but it comes from the core invriance of the stack
 			*/
-			let vals = unsafe {
-				let p = &vals as *const [Value<'_>] as *const [Value<'v>];
-				&*p
-			};
+			let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
 			let mut s =ValueStack(right);
-			s.push_frame(vals)?;
+			s.push_frame_const::<SIZE>(vals)?;
 			s.0.write_index()
 		};
 		unsafe{

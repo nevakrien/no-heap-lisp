@@ -19,6 +19,12 @@ pub struct StackRef<'a, T> {
 unsafe impl<'a, T: Send> Send for StackRef<'a, T> {}
 unsafe impl<'a, T: Sync> Sync for StackRef<'a, T> {}
 
+impl<T> Iterator for StackRef<'_, T>{
+
+type Item = T;
+fn next(&mut self) -> Option<T> { self.pop() }
+}
+
 
 impl<'a, T> StackRef<'a, T>{
     pub fn from_raw(mem:&'a mut [MaybeUninit<T>]) -> Self{
@@ -32,12 +38,24 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    /// returns the index the index the writing head points to
+    /// [T T T |*****junk****]
+    ///        ^
     pub fn write_index(&self) -> usize {
         unsafe { self.head.offset_from(self.base) as usize }
     }
 
     pub fn push(&mut self,v:T) -> Result<(),T> {
-        self.push_n::<1>([v;1]).map_err(|a| a.into_iter().next().unwrap())
+        if self.head == self.end {
+            return Err(v)
+        }
+
+        unsafe{
+            self.head.write(v);
+            self.head=self.head.add(1);
+        }
+
+        Ok(())
     }
 
     pub fn push_n<const SIZE:usize>(&mut self,v:[T;SIZE]) -> Result<(),[T;SIZE]> {
@@ -108,9 +126,13 @@ impl<'a, T> StackRef<'a, T>{
             Some(slice::from_raw_parts(p,size))
         }
     }
+
+    pub fn flush(&mut self){
+        for _ in self.into_iter() {
+
+        }
+    }
 }
-
-
 
 #[test]
 fn test_push_pop_basic() {

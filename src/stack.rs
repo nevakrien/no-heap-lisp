@@ -1,5 +1,3 @@
-#![no_std]
-
 use core::ptr;
 use core::slice;
 use core::mem::MaybeUninit;
@@ -190,9 +188,15 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
-    pub fn flush(&mut self){
+    pub fn flush_all(&mut self){
         for _ in self.into_iter() {
 
+        }
+    }
+
+    pub fn flush(&mut self,len:usize){
+        for _ in 0..len {
+            self.pop();
         }
     }
 }

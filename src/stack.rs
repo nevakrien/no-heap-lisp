@@ -119,6 +119,22 @@ impl<'a, T> StackRef<'a, T>{
         Ok(())
     }
 
+    pub fn push_slice(&mut self,v:&[T]) -> Result<(),()>
+    where T : Clone {
+        //pointer arithmetic can overflow here
+        if self.head as usize + (v.len()-1)*size_of::<T>() == self.end as usize {
+            return Err(())
+        }
+
+        unsafe{
+            let spot = &mut*ptr::slice_from_raw_parts_mut(self.head,v.len());
+            spot.clone_from_slice(v);
+            self.head=self.head.add(v.len());
+        }
+
+        Ok(())
+    }
+
     pub fn pop(&mut self) -> Option<T> {
         if self.head == self.base {
             return None;
@@ -388,4 +404,27 @@ fn test_split_stack() {
     // Push to right and check it's isolated from left
     assert!(right.push(10).is_ok());
     assert_eq!(right.pop(), Some(10));
+}
+
+#[test]
+fn test_push_slice_success_and_error() {
+    let mut storage = make_storage::<u32, 5>();
+    let mut stack = StackRef::from_slice(&mut storage);
+
+    // This slice fits
+    let input1 = [1, 2, 3];
+    assert_eq!(stack.push_slice(&input1), Ok(()));
+    assert_eq!(stack.peek_many(3), Some(&[1, 2, 3][..]));
+
+    // This slice would overflow (only 2 slots left)
+    let input2 = [4, 5, 6];
+    assert_eq!(stack.push_slice(&input2), Err(()));
+
+    // Push exactly remaining capacity
+    let input3 = [4, 5];
+    assert_eq!(stack.push_slice(&input3), Ok(()));
+
+    // Stack should now be full
+    assert_eq!(stack.write_index(), 5);
+    assert!(stack.push_slice(&[99]).is_err());
 }

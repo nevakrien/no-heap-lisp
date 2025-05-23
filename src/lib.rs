@@ -13,8 +13,12 @@ pub struct StackRef<'a, T> {
     head: *mut T,
     end: *mut T,
 
-    _phantom:PhantomData<&'a T>
+    _phantom:PhantomData<&'a mut T>
 }
+
+unsafe impl<'a, T: Send> Send for StackRef<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for StackRef<'a, T> {}
+
 
 impl<'a, T> StackRef<'a, T>{
     pub fn from_raw(mem:&'a mut [MaybeUninit<T>]) -> Self{

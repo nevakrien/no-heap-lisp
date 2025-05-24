@@ -49,23 +49,21 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 
 	pub fn push_dependent<'c, F,const SIZE : usize>(&'c mut self,f:F) ->Result<(),[Value<'c>;SIZE]>
 	where F:for<'b> FnOnce(&'b [Value<'v>])->[Value<'b>;SIZE]{
-		let num_wrote = {
-			let (left,right) = self.0.split();
-			let vals = f(&left[0..left.len()-1]);
+		let (left,right) = self.0.split();
+		let vals = f(&left[0..left.len()-1]);
 
-			/*
-			 * we are doing a lifetime cast here which seems very odd
-			 * it is kinda tricky to see why this safe
-			 * but it comes from the core invriance of the stack
-			 *
-			 * note that F can not leak any refrences
-			 * and F can not make any assumbtions about the lifetime (since b is generic)
-			*/
-			let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
-			let mut s =ValueStack(right);
-			s.push_frame_const::<SIZE>(vals)?;
-			s.0.write_index()
-		};
+		/*
+		 * we are doing a lifetime cast here which seems very odd
+		 * it is kinda tricky to see why this safe
+		 * but it comes from the core invriance of the stack
+		 *
+		 * note that F can not make any assumbtions about the lifetime (since b is generic)
+		*/
+		let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
+		let mut s =ValueStack(right);
+		s.push_frame_const::<SIZE>(vals)?;
+		
+		let num_wrote=s.0.write_index();
 		unsafe{
 			self.0.advance(num_wrote);
 		}

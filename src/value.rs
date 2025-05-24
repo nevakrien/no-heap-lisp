@@ -15,7 +15,6 @@ pub enum Value<'a>{
 ///
 /// The key invariant to keep in mind is that values can only reference things in frames BELOW them
 /// This ensures that we can safely pop the top of the stack and overwrite it
-/// The partition into frames is here to allow popping of multiple values
 ///
 /// It is UNSOUND to pop more than 1 frame at a time
 ///
@@ -44,6 +43,10 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		self.0.push_slice(v)
 	}
 
+	// Note the lifetime does have to be 'a here because 
+	// popping and then writing over values is possible
+	// it is not something rustc can see but please be very mindful
+
 	pub fn peek<'a>(&'a self) -> Option<&'a Value<'a>>{
 		self.0.peek()
 	}
@@ -56,9 +59,15 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		self.0.peek_many(n)
 	}
 
+	pub fn pop<'a>(&'a mut self) -> Option<Value<'a>>{
+		self.0.pop()
+	}
+
+	pub fn pop_n<'a,const SIZE:usize>(&'a mut self) -> Option<[Value<'a>;SIZE]>{
+		self.0.pop_n()
+	}
+
 	/// This gives a reference to the entire stack
-	/// Note the lifetime does have to be 'a here because 
-	/// popping and then writing over values is possible
 	#[inline]
 	pub fn peek_all<'a>(&'a self) -> &'a [Value<'a>]{
 		self.0.peek_many(self.0.write_index()).unwrap()
@@ -314,7 +323,7 @@ fn test_value_stack_call_split_drop() {
 fn test_overlapping_copy_call_split_drop() {
     use Value::*;
 
-    let mut storage = make_storage::<Value, 9>();
+    let mut storage = make_storage::<Value, 6>();
     let mut stack   = ValueStack::new(StackRef::from_slice(&mut storage));
 
     // lower frame (size 1)

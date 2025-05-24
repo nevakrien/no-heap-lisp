@@ -150,17 +150,29 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		let mut s =ValueStack::new(right);
 
 		let Some(Value::Frame(size)) = left.last() else{return Err(())};
-		let rest_len = left.len()-size-1;
+		let rest_len = left.len()-(size+1);
 		let rest =&left[..rest_len];
 		let temp =&left[rest_len..];
 
 		let res = f(rest,&temp[..*size],&mut s); 
 
 		let frame = s.peek_frame().ok_or(())? as *const [Value<'_>] as *const [Value<'v>];
-
+		let len = frame.len();
+		
+		//no need to check since what we are writing MUST fit
+		//since we are just moving
+		// if self.0.room_left() < 1+len - temp.len() {
+		// 	return Err(())
+		// }
 		unsafe{
 			self.0.flush(temp.len());
-			self.push_frame(&*frame)?;
+			let mut ptr = frame as *const Value<'v>;
+			
+			for _ in 0..len {
+				self.0.push(ptr.read()).unwrap();
+				ptr = ptr.add(1);
+			}
+			self.0.push(Value::Frame(len)).unwrap();
 		}
 		res
 	}
@@ -322,4 +334,33 @@ fn test_value_stack_call_split_drop() {
     // top-of-stack sanity
     let top = stack.peek_frame().unwrap();
     assert_eq!(top, &[expected_cons,y]);
+}
+
+#[test]
+fn test_overlapping_copy_call_split_drop() {
+    use Value::*;
+
+    let mut storage = make_storage::<Value, 9>();
+    let mut stack   = ValueStack::new(StackRef::from_slice(&mut storage));
+
+    // lower frame (size 1)
+    stack.push_frame(&[Int(0)]).unwrap();                // ... Frame(1)
+
+    // upper frame (size 2) – will be dropped
+    stack.push_frame(&[Int(1), Int(2)]).unwrap();        // ... Int Int Frame(2)
+
+    // replacement frame is *larger* than the one we are about to flush,
+    // so the source slice lives at higher addresses than the destination.
+    // If the implementation copies with `copy_nonoverlapping`, that's UB.
+    stack
+        .call_split_drop(|_rest, _frame, inner| {
+            inner
+                .push_frame_const([
+                    Int(10),
+                    Int(11),
+                    Int(12),          // <- 3 elements, not 2
+                ])
+                .map_err(|_| ())
+        })
+        .unwrap();
 }

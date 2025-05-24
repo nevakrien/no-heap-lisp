@@ -56,6 +56,14 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    #[inline]
+    pub fn room_left(&self) -> usize {
+        unsafe { 
+            self.end.offset_from(self.base)
+            as usize 
+        } 
+    }
+
     /// returns the index the index the writing head points to
     /// [T T T |*****junk****]
     ///        ^
@@ -118,8 +126,11 @@ impl<'a, T> StackRef<'a, T>{
     }
 
     pub fn push_n<const SIZE:usize>(&mut self,v:[T;SIZE]) -> Result<(),[T;SIZE]> {
+        if SIZE == 0 {
+            return Ok(())
+        }
         //pointer arithmetic can overflow here
-        if self.head as usize + (SIZE-1)*size_of::<T>() == self.end as usize {
+        if self.head as usize + (SIZE-1)*size_of::<T>() >= self.end as usize {
             return Err(v)
         }
 
@@ -134,7 +145,7 @@ impl<'a, T> StackRef<'a, T>{
     pub fn push_slice(&mut self,v:&[T]) -> Result<(),()>
     where T : Clone {
         //pointer arithmetic can overflow here
-        if self.head as usize + (v.len()-1)*size_of::<T>() == self.end as usize {
+        if self.head as usize + (v.len()-1)*size_of::<T>() >= self.end as usize {
             return Err(())
         }
 
@@ -445,4 +456,25 @@ fn test_push_slice_success_and_error() {
     // Stack should now be full
     assert_eq!(stack.write_index(), 5);
     assert!(stack.push_slice(&[99]).is_err());
+
+    stack.pop().unwrap();
+    assert!(stack.push_slice(&[99,66]).is_err());
+
+    stack.pop().unwrap();
+    assert!(stack.push_slice(&[99,66,11]).is_err());
+
+}
+
+#[test]
+fn test_weird_write_error(){
+    let mut storage = make_storage::<i64, 6>();
+    let mut stack   = StackRef::from_slice(&mut storage);
+
+    stack.push_slice(&[2]).unwrap();
+    stack.push_n([1]).unwrap();
+
+    stack.push_slice(&[2,3]).unwrap();
+    stack.push_n([2]).unwrap();
+
+    stack.push_slice(&[1,2,3]).unwrap_err();
 }

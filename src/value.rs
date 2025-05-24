@@ -93,6 +93,9 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		Ok(())
 	}
 
+	/// runs a function on the stack appending all if the returned value
+	/// all values from the returned stack are appended into the main stack
+	/// this is used for apapending a variable length frame refrencing the current stack
 	pub fn call_split<'b_real, F>(&mut self,f:F) ->Result<(),()>
 	where 
 	'v:'b_real,
@@ -118,6 +121,46 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 
 		unsafe{
 			self.0.advance(num_wrote);
+		}
+		res
+	}
+
+	/// similar to call_split but also pops the current stack frame
+	/// while its not possible to refrence tthat stack frame directly
+	/// all values in it can be copied
+	pub fn call_split_drop<'b_real, F>(&mut self,f:F) ->Result<(),()>
+	where 
+	'v:'b_real,
+	'mem:'b_real,
+
+	F:for<'b> FnOnce(&'b [Value<'b>],&[Value<'b>],&mut ValueStack<'_,'b>) ->Result<(),()>{
+		/*
+		 * similar idea to push_dependent
+		 * Note that the cast here discards the mut semantics out of our inner stack
+		 * This is intentional
+		 *
+		 * Also note, we are not allowing the closure to know the actual lifetime of 'b_real
+		 * This is because we do not want to allow the closure to leak anything
+		 * because that memory could be invalidated on our next move
+		*/
+		let s : &mut ValueStack<'_,'b_real> = unsafe{core::mem::transmute(&mut *self)};
+		
+
+		let (left,right) = s.0.split();
+		let mut s =ValueStack::new(right);
+
+		let Some(Value::Frame(size)) = left.last() else{return Err(())};
+		let rest_len = left.len()-size-1;
+		let rest =&left[..rest_len];
+		let temp =&left[rest_len..];
+
+		let res = f(rest,&temp[..*size],&mut s); 
+
+		let frame = s.peek_frame().ok_or(())? as *const [Value<'_>] as *const [Value<'v>];
+
+		unsafe{
+			self.0.flush(temp.len());
+			self.push_frame(&*frame)?;
 		}
 		res
 	}
@@ -229,3 +272,54 @@ fn test_value_stack_call_split() {
 
 }
 
+#[test]
+fn test_value_stack_call_split_drop() {
+    use Value::*;
+
+    // backing store that is comfortably large
+    let mut storage = make_storage::<Value, 16>();
+    let mut stack   = ValueStack::new(StackRef::from_slice(&mut storage));
+
+    // ── frame #0 ──────────────────────────────────────────────
+    let base = Int(9);
+    stack.push_frame(&[base]).unwrap();
+    // stack:  Int(9)  Frame(1)
+
+    // ── frame #1 (will be “dropped” inside call_split_drop) ──
+    let x = Int(1);
+    let y = Int(2);
+    stack.push_frame(&[x, y]).unwrap();
+    // stack:  Int(9) Frame(1)  Int(1) Int(2) Frame(2)
+
+    // ---------------------------------------------------------
+    stack
+        .call_split_drop(|rest, frame, inner| {
+            // `rest` should be the whole prefix before the frame-to-drop
+            assert_eq!(rest, &[base, Frame(1)]);
+            assert_eq!(frame, &[x, y]);
+
+            // create a new value that *only* references `rest`,
+            // never the soon-to-be-flushed `frame`.
+            let cons   = Cons(&rest[0], &rest[0]);
+
+            // push a replacement frame
+            inner
+                .push_frame_const([cons,frame[1]])
+                .map_err(|_| ())
+        })
+        .unwrap();
+
+    // expected final layout:
+    //   Int(9)  Frame(1)           ← original lower frame
+    //   Cons(&Int(9), &Int(42))    ← replacement upper frame
+    //   Frame(1)
+    let expected_cons = Value::Cons(&base,&base);
+    assert_eq!(
+        stack.peek_all(),
+        &[base, Frame(1), expected_cons,y, Frame(2)]
+    );
+
+    // top-of-stack sanity
+    let top = stack.peek_frame().unwrap();
+    assert_eq!(top, &[expected_cons,y]);
+}

@@ -47,6 +47,15 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    #[inline]
+    pub fn as_slice<'b>(&'b mut self)-> &'b mut [MaybeUninit<T>] {
+        unsafe { 
+            let len = self.end.offset_from(self.base) as usize; 
+            let p = ptr::slice_from_raw_parts_mut(self.base,len);
+            &mut *(p as *mut [MaybeUninit<T>])
+        }
+    }
+
     /// returns the index the index the writing head points to
     /// [T T T |*****junk****]
     ///        ^

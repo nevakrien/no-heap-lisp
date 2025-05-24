@@ -1,3 +1,4 @@
+use core::cell::UnsafeCell;
 use crate::stack::make_storage;
 use crate::stack::StackRef;
 
@@ -21,23 +22,23 @@ pub enum Value<'a>{
 /// it is UNSOUND to pop more than 1 frame at a time
 /// once the bottom frame is poped the top refrence is invalidated
 /// this is captured by the public API
-pub struct ValueStack<'mem,'v>(StackRef<'mem,Value<'v>>);
+pub struct ValueStack<'mem,'v>(UnsafeCell<StackRef<'mem,Value<'v>>>);
 
 impl<'mem,'v> ValueStack<'mem,'v>{
 	pub fn new(s:StackRef<'mem,Value<'v>>) -> Self{
-		Self(s)
+		Self(s.into())
 	}
 	pub fn push_frame(& mut self,v:&[Value<'v>]) -> Result<(),()>{
-		self.0.push_slice(v)?;
-		self.0.push(Value::Frame(v.len()))
-		.map_err(|_| self.0.flush(v.len()))?;
+		self.0.get_mut().push_slice(v)?;
+		self.0.get_mut().push(Value::Frame(v.len()))
+		.map_err(|_| self.0.get_mut().flush(v.len()))?;
 		Ok(())
 	}
 
 	pub fn push_frame_const<const SIZE:usize>(&mut self,v:[Value<'v>;SIZE]) -> Result<(),[Value<'v>;SIZE]>{
-		self.0.push_n::<SIZE>(v)?;
-		self.0.push(Value::Frame(SIZE))
-		.map_err(|_| self.0.pop_n::<SIZE>().unwrap())?;
+		self.0.get_mut().push_n::<SIZE>(v)?;
+		self.0.get_mut().push(Value::Frame(SIZE))
+		.map_err(|_| self.0.get_mut().pop_n::<SIZE>().unwrap())?;
 		Ok(())
 	}
 
@@ -46,12 +47,13 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	/// poping and then writing over values is possible
 	#[inline]
 	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
-		let Some(Value::Frame(size)) =  self.0.peek() 
+		let r = unsafe{&*self.0.get()};
+		let Some(Value::Frame(size)) =  r.peek() 
 		else {
 			return None;
 		};
 
-		self.0.peek_many(1+size).map(|a| &a[0..*size])
+		r.peek_many(1+size).map(|a| &a[0..*size])
 	}
 
 	/// this gives a refrence to the entire stack
@@ -59,12 +61,13 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	/// poping and then writing over values is possible
 	#[inline]
 	pub fn peek_all<'a>(&'a self) -> &'a [Value<'a>]{
-		self.0.peek_many(self.0.write_index()).unwrap()
+		let r = unsafe{&*self.0.get()};
+		r.peek_many(r.write_index()).unwrap()
 	}
 
 	pub fn push_dependent<'c, F,const SIZE : usize>(&'c mut self,f:F) ->Result<(),[Value<'c>;SIZE]>
 	where F:for<'b> FnOnce(&'b [Value<'v>])->[Value<'b>;SIZE]{
-		let (left,right) = self.0.split();
+		let (left,right) = self.0.get_mut().split();
 		let vals = f(left);
 
 		/*
@@ -75,12 +78,12 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		 * note that F can not make any assumbtions about the lifetime (since b is generic)
 		*/
 		let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
-		let mut s =ValueStack(right);
+		let mut s =ValueStack::new(right);
 		s.push_frame_const::<SIZE>(vals)?;
 		
-		let num_wrote=s.0.write_index();
+		let num_wrote=s.0.get_mut().write_index();
 		unsafe{
-			self.0.advance(num_wrote);
+			self.0.get_mut().advance(num_wrote);
 		}
 		Ok(())
 	}
@@ -102,32 +105,33 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		*/
 		let s : &mut ValueStack<'_,'b_real> = unsafe{core::mem::transmute(&mut *self)};
 		
-		let (left,right) = s.0.split();
-		let mut s =ValueStack(right);
+		let (left,right) = s.0.get_mut().split();
+		let mut s =ValueStack::new(right);
 		
 		let res = f(left,&mut s);
-		let num_wrote = s.0.write_index();
+		let num_wrote = s.0.get_mut().write_index();
 
 		unsafe{
-			self.0.advance(num_wrote);
+			self.0.get_mut().advance(num_wrote);
 		}
 		res
 	}
 
 
 	pub fn drop_frame(&mut self) -> Result<(),()>{
-		let Some(Value::Frame(size)) =  self.0.peek() 
+		let r = self.0.get_mut();
+		let Some(Value::Frame(size)) = r.peek() 
 		else {
 			return Err(());
 		};
 
-		self.0.flush(size+1);
+		r.flush(size+1);
 		Ok(())
 	}
 
 	#[inline]
 	pub fn drop_n(&mut self,n:usize){
-		self.0.flush(n)
+		self.0.get_mut().flush(n)
 	}
 }
 

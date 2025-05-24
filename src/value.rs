@@ -20,9 +20,9 @@ pub enum Value<'a>{
 /// the partision into frames is here to allow poping of multiple values
 /// it is UNSOUND to pop more than 1 frame at a time
 /// once the bottom frame is poped the top refrence is invalidated
-pub struct ValueStack<'a,'v>(StackRef<'a,Value<'v>>);
+pub struct ValueStack<'mem,'v>(StackRef<'mem,Value<'v>>);
 
-impl<'a,'v> ValueStack<'a,'v>{
+impl<'mem,'v> ValueStack<'mem,'v>{
 	pub fn push_frame(&mut self,v:&[Value<'v>]) -> Result<(),()>{
 		self.0.push_slice(v)?;
 		self.0.push(Value::Frame(v.len()))
@@ -38,7 +38,7 @@ impl<'a,'v> ValueStack<'a,'v>{
 	}
 
 	#[inline]
-	pub fn peek_frame(&self) -> Option<&[Value<'v>]>{
+	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
 		let Some(Value::Frame(size)) =  self.0.peek() 
 		else {
 			return None;

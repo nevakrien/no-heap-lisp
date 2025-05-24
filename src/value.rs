@@ -23,7 +23,7 @@ pub enum Value<'a>{
 pub struct ValueStack<'mem,'v>(StackRef<'mem,Value<'v>>);
 
 impl<'mem,'v> ValueStack<'mem,'v>{
-	pub fn push_frame(&mut self,v:&[Value<'v>]) -> Result<(),()>{
+	pub fn push_frame(& mut self,v:&[Value<'v>]) -> Result<(),()>{
 		self.0.push_slice(v)?;
 		self.0.push(Value::Frame(v.len()))
 		.map_err(|_| self.0.flush(v.len()))?;
@@ -57,6 +57,9 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 			 * we are doing a lifetime cast here which seems very odd
 			 * it is kinda tricky to see why this safe
 			 * but it comes from the core invriance of the stack
+			 *
+			 * note that F can not leak any refrences
+			 * and F can not make any assumbtions about the lifetime (since b is generic)
 			*/
 			let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
 			let mut s =ValueStack(right);
@@ -67,6 +70,34 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 			self.0.advance(num_wrote);
 		}
 		Ok(())
+	}
+
+	pub fn call_split<'b_real, F>(&mut self,f:F) ->Result<(),()>
+	where 
+	'v:'b_real,
+	'mem:'b_real,
+	F:for<'b> FnOnce(&'b [Value<'b>],&mut ValueStack<'_,'b>) ->Result<(),()>{
+		/*
+		 * similar idea to push_dependent
+		 * note that the cast here discards the mut semantics out of our inner stack
+		 * this is intentional
+		 *
+		 * also note we are not allowing the closure to know the actual liftime of 'b_real
+		 * this is because we do not want to allow the closure to leak anything
+		 * because that memory could be invalidated on our next move
+		*/
+		let s : &mut ValueStack<'_,'b_real> = unsafe{core::mem::transmute(&mut *self)};
+		
+		let (left,right) = s.0.split();
+		let mut s =ValueStack(right);
+		
+		let res = f(&left[0..left.len()-1],&mut s);
+		let num_wrote = s.0.write_index();
+
+		unsafe{
+			self.0.advance(num_wrote);
+		}
+		res
 	}
 
 	pub fn drop_frame(&mut self) -> Result<(),()>{
@@ -132,3 +163,39 @@ fn test_value_stack_push_peek_drop_frame() {
     // Should now be empty
     assert!(stack.peek_frame().is_none());
 }
+
+#[test]
+fn test_value_stack_call_split() {
+    let mut storage = make_storage::<Value, 10>();
+    let mut stack = ValueStack(StackRef::from_slice(&mut storage));
+
+    let a = Value::Int(10);
+    let b = Value::Int(20);
+
+    // Push initial frame
+    assert!(stack.push_frame(&[a, b]).is_ok());
+
+    // Now invoke call_split to construct a new frame that depends on the current one
+    let result = stack.call_split(|input, out_stack| {
+        assert_eq!(input, &[a, b]); // left is full frame (excluding the Frame marker)
+        let cons = Value::Cons(&input[0], &input[1]);
+        out_stack.push_frame_const([cons])
+        .map_err(|_|())
+    });
+
+    assert!(result.is_ok());
+
+    // Verify the top frame is the one pushed inside `call_split`
+    let top = stack.peek_frame().expect("Expected a top frame after call_split");
+    match top {
+        [Value::Cons(Value::Int(10), Value::Int(20))] => {},
+        _ => panic!("Unexpected top frame: {:?}", top),
+    }
+
+    // Cleanup both frames
+    assert!(stack.drop_frame().is_ok());
+    assert!(stack.drop_frame().is_ok());
+
+    assert!(stack.peek_frame().is_none());
+}
+

@@ -3,8 +3,6 @@ use crate::stack::StackRef;
 
 #[derive(Debug,Clone,Copy,PartialEq)]
 pub enum Value<'a>{
-	Frame(usize),
-
 	Nil,
 	False,
 	True,
@@ -35,31 +33,27 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	pub fn new(s:StackRef<'mem,Value<'v>>) -> Self{
 		Self(s.into())
 	}
-	pub fn push_frame(& mut self,v:&[Value<'v>]) -> Result<(),()>{
-		self.0.push_slice(v)?;
-		self.0.push(Value::Frame(v.len()))
-		.map_err(|_| self.0.flush(v.len()))?;
-		Ok(())
+
+	pub fn push(&mut self,v:Value<'v>) -> Result<(),Value<'v>>{
+		self.0.push(v)
+	}
+	pub fn push_n<const SIZE:usize>(&mut self,v:[Value<'v>;SIZE]) -> Result<(),[Value<'v>;SIZE]>{
+		self.0.push_n(v)
+	}
+	pub fn push_slice(&mut self,v:&[Value<'v>]) -> Result<(),()>{
+		self.0.push_slice(v)
 	}
 
-	pub fn push_frame_const<const SIZE:usize>(&mut self,v:[Value<'v>;SIZE]) -> Result<(),[Value<'v>;SIZE]>{
-		self.0.push_n::<SIZE>(v)?;
-		self.0.push(Value::Frame(SIZE))
-		.map_err(|_| self.0.pop_n::<SIZE>().unwrap())?;
-		Ok(())
+	pub fn peek<'a>(&'a self) -> Option<&'a Value<'a>>{
+		self.0.peek()
 	}
 
-	/// This gives a reference to the top stack frame
-	/// Note the lifetime does have to be 'a here because 
-	/// popping and then writing over values is possible
-	#[inline]
-	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
-		let Some(Value::Frame(size)) =  self.0.peek() 
-		else {
-			return None;
-		};
+	pub fn peek_n<'a,const SIZE:usize>(&'a self) -> Option<&'a [Value<'a>;SIZE]>{
+		self.0.peek_n()
+	}
 
-		self.0.peek_many(1+size).map(|a| &a[0..*size])
+	pub fn peek_many<'a>(&'a self,n:usize) -> Option<&'a [Value<'a>]>{
+		self.0.peek_many(n)
 	}
 
 	/// This gives a reference to the entire stack
@@ -84,7 +78,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		*/
 		let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
 		let mut s =ValueStack::new(right);
-		s.push_frame_const::<SIZE>(vals)?;
+		s.push_n::<SIZE>(vals)?;
 		
 		let num_wrote=s.0.write_index();
 		unsafe{
@@ -128,7 +122,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	/// similar to call_split but also pops the current stack frame
 	/// while its not possible to refrence tthat stack frame directly
 	/// all values in it can be copied
-	pub fn call_split_drop<'b_real, F>(&mut self,f:F) ->Result<(),()>
+	pub fn call_split_drop<'b_real, F>(&mut self,size:usize,f:F) ->Result<(),()>
 	where 
 	'v:'b_real,
 	'mem:'b_real,
@@ -149,21 +143,17 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		let (left,right) = s.0.split();
 		let mut s =ValueStack::new(right);
 
-		let Some(Value::Frame(size)) = left.last() else{return Err(())};
-		let rest_len = left.len()-(size+1);
+		let rest_len = left.len()-size;
 		let rest =&left[..rest_len];
 		let temp =&left[rest_len..];
 
-		let res = f(rest,&temp[..*size],&mut s); 
+		let res = f(rest,&temp[..size],&mut s); 
 
-		let frame = s.peek_frame().ok_or(())? as *const [Value<'_>] as *const [Value<'v>];
+		let frame = s.peek_many(size).ok_or(())? as *const [Value<'_>] as *const [Value<'v>];
 		let len = frame.len();
 		
 		//no need to check since what we are writing MUST fit
 		//since we are just moving
-		// if self.0.room_left() < 1+len - temp.len() {
-		// 	return Err(())
-		// }
 		unsafe{
 			self.0.flush(temp.len());
 			let mut ptr = frame as *const Value<'v>;
@@ -172,24 +162,12 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 				self.0.push(ptr.read()).unwrap();
 				ptr = ptr.add(1);
 			}
-			self.0.push(Value::Frame(len)).unwrap();
 		}
 		res
 	}
 
-
-	pub fn drop_frame(&mut self) -> Result<(),()>{
-		let Some(Value::Frame(size)) = self.0.peek() 
-		else {
-			return Err(());
-		};
-
-		self.0.flush(size+1);
-		Ok(())
-	}
-
 	#[inline]
-	pub fn drop_n(&mut self,n:usize){
+	pub fn flush(&mut self,n:usize){
 		self.0.flush(n)
 	}
 }
@@ -214,37 +192,37 @@ fn test_value_stack_push_peek_drop_frame() {
     let a = Value::Int(1);
     let b = Value::Int(2);
 
-    assert!(stack.push_frame(&[a, b]).is_ok());
+    assert!(stack.push_slice(&[a, b]).is_ok());
 
     // Check peek_frame sees top frame
-    let peeked = stack.peek_frame().expect("Expected valid frame");
+    let peeked = stack.peek_n::<2>().expect("Expected valid frame");
     assert_eq!(peeked, &[a, b]);
 
     // Now push a dependent frame that references the previous values
     assert!(stack.push_dependent(|frame| {
-        assert_eq!(frame, &[a, b,Value::Frame(2)]);
+        assert_eq!(frame, &[a, b]);
         let cons = Value::Cons(&frame[0], &b);
         [cons]
     }).is_ok());
 
     // Check the new frame is top
-    let top = stack.peek_frame().expect("Expected dependent frame");
+    let top = stack.peek_many(1).expect("Expected dependent frame");
     match top {
         [Value::Cons(Value::Int(1), Value::Int(2))] => {},
         _ => panic!("Unexpected frame content: {:?}", top),
     }
 
     // Drop top frame, should restore the previous one
-    assert!(stack.drop_frame().is_ok());
+    stack.flush(1);
 
-    let after_drop = stack.peek_frame().expect("Expected frame after drop");
+    let after_drop = stack.peek_many(2).expect("Expected frame after drop");
     assert_eq!(after_drop, &[a, b]);
 
     // Drop again to empty the stack
-    assert!(stack.drop_frame().is_ok());
+    stack.flush(2);
 
     // Should now be empty
-    assert!(stack.peek_frame().is_none());
+    assert!(stack.peek().is_none());
 }
 
 #[test]
@@ -256,31 +234,30 @@ fn test_value_stack_call_split() {
     let b = Value::Int(20);
 
     // Push initial frame
-    assert!(stack.push_frame(&[a, b]).is_ok());
+    assert!(stack.push_slice(&[a, b]).is_ok());
 
     // Now invoke call_split to construct a new frame that depends on the current one
     let result = stack.call_split(|input, out_stack| {
-        assert_eq!(input, &[a, b,Value::Frame(2)]); // left is full frame (excluding the Frame marker)
+        assert_eq!(input, &[a, b]); // left is full frame (excluding the Frame marker)
         let cons = Value::Cons(&input[0], &input[1]);
-        out_stack.push_frame_const([cons])
+        out_stack.push(cons)
         .map_err(|_|())
     });
 
     assert!(result.is_ok());
-    assert_eq!(stack.peek_all(),&[a,b,Value::Frame(2),Value::Cons(&a,&b),Value::Frame(1)]);
+    assert_eq!(stack.peek_all(),&[a,b,Value::Cons(&a,&b)]);
 
     // Verify the top frame is the one pushed inside `call_split`
-    let top = stack.peek_frame().expect("Expected a top frame after call_split");
+    let top = stack.peek().expect("Expected a top frame after call_split");
     match top {
-        [Value::Cons(Value::Int(10), Value::Int(20))] => {},
+        Value::Cons(Value::Int(10), Value::Int(20)) => {},
         _ => panic!("Unexpected top frame: {:?}", top),
     }
 
     // Cleanup both frames
-    assert!(stack.drop_frame().is_ok());
-    assert!(stack.drop_frame().is_ok());
+    stack.flush(3);
 
-    assert!(stack.peek_frame().is_none());
+    assert!(stack.peek().is_none());
 
 }
 
@@ -294,20 +271,20 @@ fn test_value_stack_call_split_drop() {
 
     // ── frame #0 ──────────────────────────────────────────────
     let base = Int(9);
-    stack.push_frame(&[base]).unwrap();
+    stack.push(base).unwrap();
     // stack:  Int(9)  Frame(1)
 
     // ── frame #1 (will be “dropped” inside call_split_drop) ──
     let x = Int(1);
     let y = Int(2);
-    stack.push_frame(&[x, y]).unwrap();
+    stack.push_slice(&[x, y]).unwrap();
     // stack:  Int(9) Frame(1)  Int(1) Int(2) Frame(2)
 
     // ---------------------------------------------------------
     stack
-        .call_split_drop(|rest, frame, inner| {
+        .call_split_drop(2,|rest, frame, inner| {
             // `rest` should be the whole prefix before the frame-to-drop
-            assert_eq!(rest, &[base, Frame(1)]);
+            assert_eq!(rest, &[base]);
             assert_eq!(frame, &[x, y]);
 
             // create a new value that *only* references `rest`,
@@ -316,7 +293,7 @@ fn test_value_stack_call_split_drop() {
 
             // push a replacement frame
             inner
-                .push_frame_const([cons,frame[1]])
+                .push_n([cons,frame[1]])
                 .map_err(|_| ())
         })
         .unwrap();
@@ -328,12 +305,9 @@ fn test_value_stack_call_split_drop() {
     let expected_cons = Value::Cons(&base,&base);
     assert_eq!(
         stack.peek_all(),
-        &[base, Frame(1), expected_cons,y, Frame(2)]
+        &[base, expected_cons,y]
     );
 
-    // top-of-stack sanity
-    let top = stack.peek_frame().unwrap();
-    assert_eq!(top, &[expected_cons,y]);
 }
 
 #[test]
@@ -344,18 +318,18 @@ fn test_overlapping_copy_call_split_drop() {
     let mut stack   = ValueStack::new(StackRef::from_slice(&mut storage));
 
     // lower frame (size 1)
-    stack.push_frame(&[Int(0)]).unwrap();                // ... Frame(1)
+    stack.push_slice(&[Int(0)]).unwrap();                // ... Frame(1)
 
     // upper frame (size 2) – will be dropped
-    stack.push_frame(&[Int(1), Int(2)]).unwrap();        // ... Int Int Frame(2)
+    stack.push_slice(&[Int(1), Int(2)]).unwrap();        // ... Int Int Frame(2)
 
     // replacement frame is *larger* than the one we are about to flush,
     // so the source slice lives at higher addresses than the destination.
     // If the implementation copies with `copy_nonoverlapping`, that's UB.
     stack
-        .call_split_drop(|_rest, _frame, inner| {
+        .call_split_drop(2,|_rest, _frame, inner| {
             inner
-                .push_frame_const([
+                .push_n([
                     Int(10),
                     Int(11),
                     Int(12),          // <- 3 elements, not 2

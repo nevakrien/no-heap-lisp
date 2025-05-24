@@ -24,6 +24,11 @@ pub enum Value<'a>{
 /// this is captured by the public API
 pub struct ValueStack<'mem,'v>(UnsafeCell<StackRef<'mem,Value<'v>>>);
 
+//the unsafecell is purely for escapes semantics and does not actually allow what unsafecells do
+//so since Value is Send and Sync so is this stack
+unsafe impl Sync for ValueStack<'_, '_>{}
+unsafe impl Send for ValueStack<'_, '_>{}
+
 impl<'mem,'v> ValueStack<'mem,'v>{
 	pub fn new(s:StackRef<'mem,Value<'v>>) -> Self{
 		Self(s.into())

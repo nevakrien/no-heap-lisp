@@ -26,6 +26,7 @@ fn next(&mut self) -> Option<T> { self.pop() }
 
 
 impl<'a, T> StackRef<'a, T>{
+    #[inline]
     pub fn from_slice(mem:&'a mut [MaybeUninit<T>]) -> Self{
         let base = mem.as_mut_ptr() as _;
         Self{
@@ -37,6 +38,7 @@ impl<'a, T> StackRef<'a, T>{
         }
     }
 
+    #[inline]
     pub fn to_slice(self) -> &'a mut [MaybeUninit<T>] {
         unsafe { 
             let len = self.end.offset_from(self.base) as usize; 
@@ -48,16 +50,19 @@ impl<'a, T> StackRef<'a, T>{
     /// returns the index the index the writing head points to
     /// [T T T |*****junk****]
     ///        ^
+    #[inline]
     pub fn write_index(&self) -> usize {
         unsafe { self.head.offset_from(self.base) as usize }
     }
 
     /// sets the write index retrived from write_index
     /// note that the memory below that index is assumed inilized 
+    #[inline    ]
     pub unsafe fn set_write_index(&mut self,idx:usize){ unsafe {
         self.head = self.base.add(idx)
     }}
 
+    #[inline]
     pub unsafe fn advance(&mut self,add:usize){ unsafe {
         self.set_write_index(self.write_index()+add)
     }}

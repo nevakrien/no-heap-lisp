@@ -15,7 +15,7 @@ pub enum Value<'a>{
 /// this type provies a SAFE abstraction over the value stack.
 /// it is the main place where we have to deal with the crazy unsafety of what this crate does.
 ///
-/// the key invriance to keep in mind is values can only refrence things in frames BELOW them
+/// the key invariance to keep in mind is values can only refrence things in frames BELOW them
 /// this ensures that we can safely pop the top of the stack and overwrite it
 /// the partision into frames is here to allow poping of multiple values
 /// it is UNSOUND to pop more than 1 frame at a time
@@ -24,6 +24,9 @@ pub enum Value<'a>{
 pub struct ValueStack<'mem,'v>(StackRef<'mem,Value<'v>>);
 
 impl<'mem,'v> ValueStack<'mem,'v>{
+	pub fn new(s:StackRef<'mem,Value<'v>>) -> Self{
+		Self(s)
+	}
 	pub fn push_frame(& mut self,v:&[Value<'v>]) -> Result<(),()>{
 		self.0.push_slice(v)?;
 		self.0.push(Value::Frame(v.len()))
@@ -40,7 +43,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 
 	/// this gives a refrence to the top stack frame
 	/// note the lifetime does have to be 'a here because 
-	/// poping and then writing over the value is possible
+	/// poping and then writing over values is possible
 	#[inline]
 	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
 		let Some(Value::Frame(size)) =  self.0.peek() 
@@ -51,6 +54,14 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		self.0.peek_many(1+size).map(|a| &a[0..*size])
 	}
 
+	/// this gives a refrence to the entire stack
+	/// note the lifetime does have to be 'a here because 
+	/// poping and then writing over values is possible
+	#[inline]
+	pub fn peek_all<'a>(&'a self) -> &'a [Value<'a>]{
+		self.0.peek_many(self.0.write_index()).unwrap()
+	}
+
 	pub fn push_dependent<'c, F,const SIZE : usize>(&'c mut self,f:F) ->Result<(),[Value<'c>;SIZE]>
 	where F:for<'b> FnOnce(&'b [Value<'v>])->[Value<'b>;SIZE]{
 		let (left,right) = self.0.split();
@@ -59,7 +70,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		/*
 		 * we are doing a lifetime cast here which seems very odd
 		 * it is kinda tricky to see why this safe
-		 * but it comes from the core invriance of the stack
+		 * but it comes from the core invariance of the stack
 		 *
 		 * note that F can not make any assumbtions about the lifetime (since b is generic)
 		*/
@@ -113,6 +124,11 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		self.0.flush(size+1);
 		Ok(())
 	}
+
+	#[inline]
+	pub fn drop_n(&mut self,n:usize){
+		self.0.flush(n)
+	}
 }
 
 #[test]
@@ -130,7 +146,7 @@ fn double_read_on_copy(){
 #[test]
 fn test_value_stack_push_peek_drop_frame() {
     let mut storage = make_storage::<Value, 10>();
-    let mut stack = ValueStack(StackRef::from_slice(&mut storage));
+    let mut stack = ValueStack::new(StackRef::from_slice(&mut storage));
 
     let a = Value::Int(1);
     let b = Value::Int(2);
@@ -171,7 +187,7 @@ fn test_value_stack_push_peek_drop_frame() {
 #[test]
 fn test_value_stack_call_split() {
     let mut storage = make_storage::<Value, 10>();
-    let mut stack = ValueStack(StackRef::from_slice(&mut storage));
+    let mut stack = ValueStack::new(StackRef::from_slice(&mut storage));
 
     let a = Value::Int(10);
     let b = Value::Int(20);
@@ -188,6 +204,7 @@ fn test_value_stack_call_split() {
     });
 
     assert!(result.is_ok());
+    assert_eq!(stack.peek_all(),&[a,b,Value::Frame(2),Value::Cons(&a,&b),Value::Frame(1)]);
 
     // Verify the top frame is the one pushed inside `call_split`
     let top = stack.peek_frame().expect("Expected a top frame after call_split");

@@ -13,15 +13,17 @@ pub enum Value<'a>{
 	Cons(&'a Value<'a>,&'a Value<'a>),
 }
 
-/// this type provies a SAFE abstraction over the value stack.
-/// it is the main place where we have to deal with the crazy unsafety of what this crate does.
+/// This type provides a SAFE abstraction over the value stack.
+/// It is the main place where we have to deal with the unsafe behavior of this crate.
 ///
-/// the key invariance to keep in mind is values can only refrence things in frames BELOW them
-/// this ensures that we can safely pop the top of the stack and overwrite it
-/// the partision into frames is here to allow poping of multiple values
-/// it is UNSOUND to pop more than 1 frame at a time
-/// once the bottom frame is poped the top refrence is invalidated
-/// this is captured by the public API
+/// The key invariant to keep in mind is that values can only reference things in frames BELOW them
+/// This ensures that we can safely pop the top of the stack and overwrite it
+/// The partition into frames is here to allow popping of multiple values
+///
+/// It is UNSOUND to pop more than 1 frame at a time
+///
+/// Once the bottom frame is popped, the top reference is invalidated
+/// This is captured by the public API
 pub struct ValueStack<'mem,'v>(UnsafeCell<StackRef<'mem,Value<'v>>>);
 
 //the unsafecell is purely for escapes semantics and does not actually allow what unsafecells do
@@ -47,9 +49,9 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		Ok(())
 	}
 
-	/// this gives a refrence to the top stack frame
-	/// note the lifetime does have to be 'a here because 
-	/// poping and then writing over values is possible
+	/// This gives a reference to the top stack frame
+	/// Note the lifetime does have to be 'a here because 
+	/// popping and then writing over values is possible
 	#[inline]
 	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
 		let r = unsafe{&*self.0.get()};
@@ -61,9 +63,9 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		r.peek_many(1+size).map(|a| &a[0..*size])
 	}
 
-	/// this gives a refrence to the entire stack
-	/// note the lifetime does have to be 'a here because 
-	/// poping and then writing over values is possible
+	/// This gives a reference to the entire stack
+	/// Note the lifetime does have to be 'a here because 
+	/// popping and then writing over values is possible
 	#[inline]
 	pub fn peek_all<'a>(&'a self) -> &'a [Value<'a>]{
 		let r = unsafe{&*self.0.get()};
@@ -76,11 +78,11 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		let vals = f(left);
 
 		/*
-		 * we are doing a lifetime cast here which seems very odd
-		 * it is kinda tricky to see why this safe
+		 * We are doing a lifetime cast here, which seems very odd
+		 * It is kinda tricky to see why this is safe
 		 * but it comes from the core invariance of the stack
 		 *
-		 * note that F can not make any assumbtions about the lifetime (since b is generic)
+		 * Note that F can not make any assumptions about the lifetime (since b is generic)
 		*/
 		let vals : [Value<'v>;SIZE] = unsafe {core::mem::transmute(vals)};
 		let mut s =ValueStack::new(right);
@@ -101,11 +103,11 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	F:for<'b> FnOnce(&'b [Value<'b>],&mut ValueStack<'_,'b>) ->Result<(),()>{
 		/*
 		 * similar idea to push_dependent
-		 * note that the cast here discards the mut semantics out of our inner stack
-		 * this is intentional
+		 * Note that the cast here discards the mut semantics out of our inner stack
+		 * This is intentional
 		 *
-		 * also note we are not allowing the closure to know the actual liftime of 'b_real
-		 * this is because we do not want to allow the closure to leak anything
+		 * Also note, we are not allowing the closure to know the actual lifetime of 'b_real
+		 * This is because we do not want to allow the closure to leak anything
 		 * because that memory could be invalidated on our next move
 		*/
 		let s : &mut ValueStack<'_,'b_real> = unsafe{core::mem::transmute(&mut *self)};
@@ -173,7 +175,7 @@ fn test_value_stack_push_peek_drop_frame() {
         [cons]
     }).is_ok());
 
-    // Check new frame is top
+    // Check the new frame is top
     let top = stack.peek_frame().expect("Expected dependent frame");
     match top {
         [Value::Cons(Value::Int(1), Value::Int(2))] => {},

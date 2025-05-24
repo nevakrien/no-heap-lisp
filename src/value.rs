@@ -14,12 +14,13 @@ pub enum Value<'a>{
 
 /// this type provies a SAFE abstraction over the value stack.
 /// it is the main place where we have to deal with the crazy unsafety of what this crate does.
-/// 
+///
 /// the key invriance to keep in mind is values can only refrence things in frames BELOW them
 /// this ensures that we can safely pop the top of the stack and overwrite it
 /// the partision into frames is here to allow poping of multiple values
 /// it is UNSOUND to pop more than 1 frame at a time
 /// once the bottom frame is poped the top refrence is invalidated
+/// this is captured by the public API
 pub struct ValueStack<'mem,'v>(StackRef<'mem,Value<'v>>);
 
 impl<'mem,'v> ValueStack<'mem,'v>{
@@ -37,6 +38,9 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		Ok(())
 	}
 
+	/// this gives a refrence to the top stack frame
+	/// note the lifetime does have to be 'a here because 
+	/// poping and then writing over the value is possible
 	#[inline]
 	pub fn peek_frame<'a>(&'a self) -> Option<&'a [Value<'a>]>{
 		let Some(Value::Frame(size)) =  self.0.peek() 
@@ -50,7 +54,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	pub fn push_dependent<'c, F,const SIZE : usize>(&'c mut self,f:F) ->Result<(),[Value<'c>;SIZE]>
 	where F:for<'b> FnOnce(&'b [Value<'v>])->[Value<'b>;SIZE]{
 		let (left,right) = self.0.split();
-		let vals = f(&left[0..left.len()-1]);
+		let vals = f(left);
 
 		/*
 		 * we are doing a lifetime cast here which seems very odd
@@ -74,6 +78,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 	where 
 	'v:'b_real,
 	'mem:'b_real,
+
 	F:for<'b> FnOnce(&'b [Value<'b>],&mut ValueStack<'_,'b>) ->Result<(),()>{
 		/*
 		 * similar idea to push_dependent
@@ -89,7 +94,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		let (left,right) = s.0.split();
 		let mut s =ValueStack(right);
 		
-		let res = f(&left[0..left.len()-1],&mut s);
+		let res = f(left,&mut s);
 		let num_wrote = s.0.write_index();
 
 		unsafe{
@@ -97,6 +102,7 @@ impl<'mem,'v> ValueStack<'mem,'v>{
 		}
 		res
 	}
+
 
 	pub fn drop_frame(&mut self) -> Result<(),()>{
 		let Some(Value::Frame(size)) =  self.0.peek() 
@@ -137,7 +143,7 @@ fn test_value_stack_push_peek_drop_frame() {
 
     // Now push a dependent frame that references the previous values
     assert!(stack.push_dependent(|frame| {
-        assert_eq!(frame, &[a, b]);
+        assert_eq!(frame, &[a, b,Value::Frame(2)]);
         let cons = Value::Cons(&frame[0], &b);
         [cons]
     }).is_ok());
@@ -175,7 +181,7 @@ fn test_value_stack_call_split() {
 
     // Now invoke call_split to construct a new frame that depends on the current one
     let result = stack.call_split(|input, out_stack| {
-        assert_eq!(input, &[a, b]); // left is full frame (excluding the Frame marker)
+        assert_eq!(input, &[a, b,Value::Frame(2)]); // left is full frame (excluding the Frame marker)
         let cons = Value::Cons(&input[0], &input[1]);
         out_stack.push_frame_const([cons])
         .map_err(|_|())
@@ -195,5 +201,6 @@ fn test_value_stack_call_split() {
     assert!(stack.drop_frame().is_ok());
 
     assert!(stack.peek_frame().is_none());
+
 }
 

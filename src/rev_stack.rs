@@ -111,7 +111,9 @@ impl<'a, T> RevStackRef<'a, T> {
     /// that lives for as long as the mutable borrow of `self`.
     ///
     /// ⚠️ The caller is now responsible for eventually dropping those `T`s.
-    pub fn pop_many<'b>(&'b mut self, n: usize) -> Option<&'b mut [T]> {
+    pub fn pop_many<'b>(&'b mut self, n: usize) -> Option<&'b mut [T]>
+    where T :Copy
+    {
         if n > self.len {
             return None;
         }

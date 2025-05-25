@@ -228,7 +228,9 @@ impl<'a, T> StackRef<'a, T>{
     }
 
     #[inline]
-    pub fn pop_many<'b>(&'b mut self,size:usize) -> Option<&'b mut [T]>{
+    pub fn pop_many<'b>(&'b mut self,size:usize) -> Option<&'b mut [T]>
+    where T :Copy
+    {
         //we cant do normal arithmetic since it may overflow
          if (self.head as usize) < self.base as usize + size*size_of::<T>(){
             return None;

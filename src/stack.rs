@@ -220,6 +220,21 @@ impl<'a, T> StackRef<'a, T>{
     }
 
     #[inline]
+    pub fn pop_many<'b>(&'b mut self,size:usize) -> Option<&'b mut [T]>{
+        //we cant do normal arithmetic since it may overflow
+         if (self.head as usize) < self.base as usize + size*size_of::<T>(){
+            return None;
+        }
+
+        unsafe {
+            self.head=self.head.sub(size);
+            let p = self.head as *mut T;
+            Some(&mut*ptr::slice_from_raw_parts_mut(p,size))
+        }
+    }
+
+
+    #[inline]
     pub fn peek<'b>(&'b self) -> Option<&'b T>{
         self.peek_n::<1>().map(|a| &a[0])
     }
@@ -540,4 +555,8 @@ fn test_new_full_usage() {
     // Push again to see if reuse is correct
     assert!(stack.push(77).is_ok());
     assert_eq!(stack.peek(), Some(&77));
+    assert!(stack.push(77).is_ok());
+
+    stack.pop_many(4).ok_or(()).unwrap_err();
+    stack.pop_many(2).unwrap();
 }

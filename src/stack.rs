@@ -104,8 +104,7 @@ impl<'a, T> StackRef<'a, T>{
     #[inline]
     pub fn room_left(&self) -> usize {
         unsafe { 
-            self.end.offset_from(self.head)
-            as usize 
+            self.end.offset_from(self.head).try_into().unwrap() 
         } 
     }
 
@@ -570,7 +569,7 @@ fn test_weird_write_error(){
 }
 
 #[test]
-fn test_new_full_usage() {
+fn test_full_usage() {
     let mut data = [10, 20, 30, 40,50];
     let mut stack = StackRef::new_full(&mut data);
 
@@ -583,14 +582,20 @@ fn test_new_full_usage() {
 
     // Pop all elements, expect LIFO order
     stack.drop_inside(3,2).unwrap();
+    assert_eq!(stack.room_left(), 2);
+
 
     assert_eq!(stack.pop(), Some(50));
     assert_eq!(stack.pop(), Some(40));
+    assert_eq!(stack.room_left(), 4);
+
+
     
     // assert_eq!(stack.pop(), Some(30));
     // assert_eq!(stack.pop(), Some(20));
 
     assert_eq!(stack.pop(), Some(10));
+    assert_eq!(stack.room_left(), 5);
 
     // Now empty
     assert_eq!(stack.pop(), None);

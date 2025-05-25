@@ -19,6 +19,14 @@ pub fn take_last_mut<T>(slice: &mut [T], n: usize) -> &mut [T] {
     &mut slice[start..]
 }
 
+pub fn take_last_raw<T:Sized>(slice: *mut [T], n: usize) -> *mut [T] {
+    let len = slice.len();
+    let start = len.saturating_sub(n);
+    let p = unsafe{(slice as *mut T).add(start)};
+
+    ptr::slice_from_raw_parts_mut(p,len-start)
+}
+
 #[test]
 fn test_take_last() {
     let slice = [10, 20, 30, 40, 50];

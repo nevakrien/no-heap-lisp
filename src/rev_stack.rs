@@ -87,7 +87,7 @@ impl<'a, T> RevStackRef<'a, T> {
 
         unsafe {
             let dst = self.base.add(dst_start);
-            for (i, v) in vals.iter().enumerate() {
+            for (i, v) in vals.iter().rev().enumerate() {
                 dst.add(i).write(v.clone());
             }
         }
@@ -175,12 +175,12 @@ use super::*;
         assert_eq!(s.len(), 4);
 
         let peeked = s.peek_many(2).unwrap();
-        assert_eq!(peeked, &[30, 40]);
+        assert_eq!(peeked, &[40,30]);
 
         //order may seem odd here but [30 40] must be ontop
         //20 is the highest element of the previous slice so it must be the last
         let popped = s.pop_many(3).unwrap();
-        assert_eq!(popped, &[30, 40, 20]);
+        assert_eq!(popped, &[40,30, 20]);
 
         assert_eq!(s.len(), 1);
         assert_eq!(s.peek(), Some(&10));

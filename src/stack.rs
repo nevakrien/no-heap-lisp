@@ -104,7 +104,7 @@ impl<'a, T> StackRef<'a, T>{
     #[inline]
     pub fn room_left(&self) -> usize {
         unsafe { 
-            self.end.offset_from(self.base)
+            self.end.offset_from(self.head)
             as usize 
         } 
     }
@@ -241,6 +241,34 @@ impl<'a, T> StackRef<'a, T>{
             let p = self.head as *mut T;
             Some(&mut*ptr::slice_from_raw_parts_mut(p,size))
         }
+    }
+
+    //drops starting from skip below the counter taking count upward
+    pub fn drop_inside(&mut self,skip:usize,count:usize)-> Result<(),()>{
+        if skip == 0 {
+            return Ok(())
+        }
+
+        let stack_end = self.write_index().checked_sub(1).ok_or(())?;
+        let spot = stack_end.checked_sub(skip).ok_or(())?;
+        let start_good = spot.checked_add(count).ok_or(())?;
+
+        if start_good > stack_end{
+            return Err(())
+        }
+
+        let count_move = self.write_index() - start_good;
+
+        unsafe{
+            let p_start = self.base.add(spot);
+            let p_good = self.base.add(start_good);
+            ptr::copy(p_good as *const _,p_start,count_move);
+
+            self.head=self.head.sub(count);
+        }
+
+        Ok(())
+
     }
 
 
@@ -543,20 +571,25 @@ fn test_weird_write_error(){
 
 #[test]
 fn test_new_full_usage() {
-    let mut data = [10, 20, 30, 40];
+    let mut data = [10, 20, 30, 40,50];
     let mut stack = StackRef::new_full(&mut data);
 
     // At construction, all items should be present in reverse push order
-    assert_eq!(stack.write_index(), 4);
-    assert_eq!(stack.room_left(), 4);
+    assert_eq!(stack.write_index(), 5);
+    assert_eq!(stack.room_left(), 0);
 
     // Peek top item
-    assert_eq!(stack.peek(), Some(&40));
+    assert_eq!(stack.peek(), Some(&50));
 
     // Pop all elements, expect LIFO order
+    stack.drop_inside(3,2).unwrap();
+
+    assert_eq!(stack.pop(), Some(50));
     assert_eq!(stack.pop(), Some(40));
-    assert_eq!(stack.pop(), Some(30));
-    assert_eq!(stack.pop(), Some(20));
+    
+    // assert_eq!(stack.pop(), Some(30));
+    // assert_eq!(stack.pop(), Some(20));
+
     assert_eq!(stack.pop(), Some(10));
 
     // Now empty

@@ -7,6 +7,30 @@ pub fn make_storage<T,const SIZE:usize>() ->[MaybeUninit<T>;SIZE]{
     [const { MaybeUninit::uninit() };SIZE]
 }
 
+pub fn take_last<T>(slice: &[T], n: usize) -> &[T] {
+    let len = slice.len();
+    let start = len.saturating_sub(n);
+    &slice[start..]
+}
+
+pub fn take_last_mut<T>(slice: &mut [T], n: usize) -> &mut [T] {
+    let len = slice.len();
+    let start = len.saturating_sub(n);
+    &mut slice[start..]
+}
+
+#[test]
+fn test_take_last() {
+    let slice = [10, 20, 30, 40, 50];
+
+    assert_eq!(take_last(&slice, 0), &[]);
+    assert_eq!(take_last(&slice, 2), &[40, 50]);
+    assert_eq!(take_last(&slice, 5), &[10, 20, 30, 40, 50]);
+    assert_eq!(take_last(&slice, 10), &[10, 20, 30, 40, 50]); // overflow-safe
+}
+
+
+
 pub struct StackRef<'a, T> {
     base: *mut T,
     head: *mut T,
@@ -26,6 +50,19 @@ fn next(&mut self) -> Option<T> { self.pop() }
 
 
 impl<'a, T> StackRef<'a, T>{
+    #[inline]
+    pub fn new_full(mem:&'a mut [T]) -> Self{
+        let base = mem.as_mut_ptr();
+        let end = unsafe {base.add(mem.len())}; 
+        Self{
+            base,
+            head: end,
+            end,
+
+            _phantom:PhantomData,
+        }
+    }
+
     #[inline]
     pub fn from_slice(mem:&'a mut [MaybeUninit<T>]) -> Self{
         let base = mem.as_mut_ptr() as _;
@@ -477,4 +514,30 @@ fn test_weird_write_error(){
     stack.push_n([2]).unwrap();
 
     stack.push_slice(&[1,2,3]).unwrap_err();
+}
+
+#[test]
+fn test_new_full_usage() {
+    let mut data = [10, 20, 30, 40];
+    let mut stack = StackRef::new_full(&mut data);
+
+    // At construction, all items should be present in reverse push order
+    assert_eq!(stack.write_index(), 4);
+    assert_eq!(stack.room_left(), 4);
+
+    // Peek top item
+    assert_eq!(stack.peek(), Some(&40));
+
+    // Pop all elements, expect LIFO order
+    assert_eq!(stack.pop(), Some(40));
+    assert_eq!(stack.pop(), Some(30));
+    assert_eq!(stack.pop(), Some(20));
+    assert_eq!(stack.pop(), Some(10));
+
+    // Now empty
+    assert_eq!(stack.pop(), None);
+
+    // Push again to see if reuse is correct
+    assert!(stack.push(77).is_ok());
+    assert_eq!(stack.peek(), Some(&77));
 }
